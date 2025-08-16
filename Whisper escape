@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Whisper of Fear — Demo</title>
+<style>
+  :root{font-family:Inter, system-ui, Arial}
+  body{margin:0;background:#010103;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh}
+  #wrap{width:420px;padding:12px;border-radius:10px;background:linear-gradient(180deg,#051018,#020307);box-shadow:0 12px 40px rgba(0,0,0,0.8)}
+  canvas{width:400px;height:600px;display:block;border-radius:8px;background:#000}
+  .hud{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .btn{background:#7c3aed;border:none;padding:8px 10px;border-radius:8px;color:white;cursor:pointer}
+  .muted{opacity:0.8;font-size:13px}
+  .row{display:flex;gap:8px}
+</style>
+</head>
+<body>
+  <div id="wrap">
+    <div class="hud">
+      <div>
+        <select id="mode">
+          <option value="easy">Easy</option>
+          <option value="normal">Normal</option>
+          <option value="hard">Hard</option>
+        </select>
+        <span class="muted">Lives: <b id="lives">5</b></span>
+      </div>
+      <div class="row">
+        <button id="start" class="btn">Start</button>
+        <button id="restart" class="btn">Restart</button>
+      </div>
+    </div>
+    <canvas id="game" width="400" height="600"></canvas>
+    <p style="font-size:12px;opacity:0.7;margin-top:8px">Controls: WASD / Arrows to move — Space to toggle torch. Collect letters, solve riddles, escape. Replace audio files in /assets/</p>
+  </div>
+
+<script>
+/* -----------------------------------------------
+   Whisper of Fear — single-file demo
+   Features included:
+   - Mode selection with difficulty mapping (easy->normal, normal->hard, hard->nightmare)
+   - 5 lives system with HUD
+   - Torch (toggle) with flicker
+   - Letters with riddles; collect to unlock code
+   - Ghost with stalking + lunge phases
+   - Voice note triggers (placeholder audio elements)
+   - Background music per mode (placeholders)
+   Note: Replace audio URLs in the `AUDIO_ASSETS` map with your files.
+   -------------------------------------------------*/
+
+const canvas = document.getElementById('game'); const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const modeSelect = document.getElementById('mode');
+const startBtn = document.getElementById('start'); const restartBtn = document.getElementById('restart');
+const livesEl = document.getElementById('lives');
+
+// ---------- Assets (replace these paths with real files in your /assets folder) ----------
+const AUDIO_ASSETS = {
+  bg_easy: 'assets/bg_easy.mp3',
+  bg_normal: 'assets/bg_normal.mp3',
+  bg_hard: 'assets/bg_hard.mp3',
+  voice_easy_1: 'assets/voice_easy_1.mp3',
+  voice_normal_1: 'assets/voice_normal_1.mp3',
+  voice_hard_1: 'assets/voice_hard_1.mp3',
+  jumpscare: 'assets/jumpscare.mp3'
+};
+
+// Preload audio elements
+const audios = {};
+for(const k in AUDIO_ASSETS){ const a = new Audio(AUDIO_ASSETS[k]); a.preload='auto'; audios[k]=a; }
+
+// game state
+let state = {
+  mode: 'easy', // easy|normal|hard
+  mapped: 'normal', // actual difficulty used
+  lives: 5,
+  running: false,
+  player: {x:60,y:H-80,w:20,h:24,speed:2.6},
+  torchOn: true,
+  torchFlicker: 0,
+  letters: [],
+  collectedLetters: 0,
+  ghost: null,
+  escapeUnlocked: false,
+  time:0
+};
+
+// riddles (fixed set) — you can expand or randomize
+const LETTERS = [
+  {text: 'Main andhera hoon, par roshni se darta hoon.', answer: 'andhera'},
+  {text: 'Roz naya aata hoon par mera rang badalta hai.', answer: 'din'},
+  {text: 'Hawa bina aawaz tez bhagegi.', answer: 'hawa'}
+];
+
+function mapDifficulty(mode){
+  // user selects mode but mapping shifts difficulty up (as requested)
+  if(mode==='easy') return 'normal';
+  if(mode==='normal') return 'hard';
+  return 'nightmare';
+}
+
+function spawnLetters(){
+  state.letters = [];
+  for(let i=0;i<LETTERS.length;i++){
+    state.letters.push({x:40 + i*120, y:140 + (i%2)*80, w:22, h:26, id:i});
+  }
+}
+
+function spawnGhost(){
+  state.ghost = {x: W/2, y: 60, r:26, phase:0, timer:0, speed:0.32};
+}
+
+function startGame(){
+  state.mode = modeSelect.value; state.mapped = mapDifficulty(state.mode);
+  state.lives = 5; state.player.x=60; state.player.y=H-80; state.running=true; state.collectedLetters=0; state.escapeUnlocked=false; state.time=0;
+  spawnLetters(); spawnGhost(); updateHUD(); playBackground(); loop();
+}
+
+function restartGame(){ stopAllAudio(); startGame(); }
+
+startBtn.addEventListener('click', ()=> startGame()); restartBtn.addEventListener('click', ()=> restartGame());
+
+function updateHUD(){ livesEl.textContent = state.lives; }
+
+// audio helpers
+function playBackground(){ stopAllAudio(); if(state.mapped==='normal') audios.bg_easy.play();
+  else if(state.mapped==='hard') audios.bg_normal.play(); else audios.bg_hard.play(); }
+function stopAllAudio(){ for(const k in audios){ try{ audios[k].pause(); audios[k].currentTime=0; }catch(e){} } }
+function playVoice(name){ const v = audios[name]; if(v){ v.currentTime=0; v.play().catch(()=>{}); } }
+function playJumpscare(){ const v = audios.jumpscare; if(v){ v.currentTime=0; v.play().catch(()=>{}); } }
+
+// input
+const pressed = {}; window.addEventListener('keydown', e=>{ pressed[e.key]=true; if(e.key===' ') { state.torchOn = !state.torchOn; e.preventDefault(); }});
+window.addEventListener('keyup', e=>{ pressed[e.key]=false; });
+
+// simple riddle prompt helper (blocking prompt for demo; replace with UI in final game)
+function askRiddle(letter){ const q = LETTERS[letter.id].text; const ans = prompt('Paheli: ' + q + '\n(Answer in one word)'); if(!ans) return false; return ans.toLowerCase().includes(LETTERS[letter.id].answer); }
+
+function update(dt){ if(!state.running) return; state.time += dt;
+  // player movement
+  const p = state.player;
+  if(pressed['ArrowLeft']||pressed['a']) p.x -= p.speed; if(pressed['ArrowRight']||pressed['d']) p.x += p.speed; if(pressed['ArrowUp']||pressed['w']) p.y -= p.speed; if(pressed['ArrowDown']||pressed['s']) p.y += p.speed;
+  p.x = Math.max(8, Math.min(W - p.w - 8, p.x)); p.y = Math.max(8, Math.min(H - p.h - 8, p.y));
+
+  // torch flicker depends on difficulty
+  state.torchFlicker = 0.85 + (Math.sin(state.time*0.02) * 0.15) + (state.mapped==='nightmare'? Math.random()*0.3:0);
+
+  // ghost AI
+  const g = state.ghost; g.timer += dt;
+  if(g.phase===0){ g.x += Math.sin(state.time*0.6)*0.2; g.y += Math.cos(state.time*0.4)*0.12; if(Math.random() < 0.005*(state.mapped==='hard'?2:1)) { g.phase=1; g.timer=0; } }
+  else if(g.phase===1){ // stalking
+    const dirx = p.x + p.w/2 - g.x; const diry = p.y + p.h/2 - g.y; const d = Math.hypot(dirx,diry)||1; g.x += (dirx/d) * g.speed * (state.mapped==='nightmare'?3.2:1.2); g.y += (diry/d) * g.speed * (state.mapped==='nightmare'?3.2:1.2);
+    if(d < 90 || g.timer > 2500) { g.phase=2; g.timer=0; playVoice(state.mapped==='nightmare'?'voice_hard_1': state.mapped==='hard'?'voice_normal_1':'voice_easy_1'); }
+  } else if(g.phase===2){ // lunge
+    const dirx = p.x + p.w/2 - g.x; const diry = p.y + p.h/2 - g.y; const d = Math.hypot(dirx,diry)||1; g.x += (dirx/d) * g.speed * (state.mapped==='nightmare'?10:6); g.y += (diry/d) * g.speed * (state.mapped==='nightmare'?10:6);
+    if(g.timer > 800){ g.phase=0; g.timer=0; g.x = Math.random()*(W-160)+80; g.y = Math.random()*120 + 40; }
+  }
+
+  // detect collision with ghost
+  const dist = Math.hypot((p.x+p.w/2)-g.x, (p.y+p.h/2)-g.y);
+  const torchRadius = state.torchOn ? 120 * state.torchFlicker : 48; // when torch off small radius (danger)
+  const inLight = (dist < torchRadius);
+  // if ghost reaches player
+  if(dist < 30 + (g.phase===2?20:0)){
+    // if in light and difficulty is easier, ghost gets scared; else jump-scare
+    if(inLight && state.mapped!=='nightmare' && Math.random()>0.5){ // ghost retreats sometimes
+      g.phase = 0; g.x -= 40; g.y -= 30;
+    } else {
+      // life lost
+      state.lives -= 1; updateHUD(); playJumpscare(); state.running=false; setTimeout(()=>{ if(state.lives<=0){ gameOver(); } else { // respawn
+        state.player.x = 60; state.player.y = H-80; state.ghost.x = Math.random()*(W-160)+80; state.ghost.y = Math.random()*120+40; state.ghost.phase=0; state.running=true; }
+      }, 900);
+    }
+  }
+
+  // letter pickup
+  for(let i=state.letters.length-1;i>=0;i--){ const L = state.letters[i]; if(p.x < L.x + L.w && p.x + p.w > L.x && p.y < L.y + L.h && p.y + p.h > L.y){
+      // prompt riddle
+      const ok = askRiddle(L);
+      if(ok){ state.collectedLetters += 1; state.letters.splice(i,1); if(state.collectedLetters >= LETTERS.length){ state.escapeUnlocked = true; alert('You found all clues — head to the door!'); }
+      } else { // wrong — ghost triggers
+        playJumpscare(); state.lives -= 1; updateHUD(); state.letters.splice(i,1);
+      }
+    }}
+
+  // escape area (top-right)
+  if(state.escapeUnlocked && p.x < W-40 && p.y < 80){ // reached door area
+    victory();
+  }
+}
+
+function draw(){ ctx.clearRect(0,0,W,H); ctx.fillStyle='#030305'; ctx.fillRect(0,0,W,H);
+  // room decoration
+  ctx.fillStyle='rgba(20,10,12,0.7)'; for(let i=0;i<5;i++){ ctx.fillRect(20 + i*72, 140 + (i%2)*28, 40, 300); }
+
+  // draw door
+  ctx.fillStyle = state.escapeUnlocked ? '#6ee7b7' : '#2d3748'; ctx.fillRect(W-56, 12, 44, 72);
+
+  // draw letters
+  ctx.fillStyle='#facc15'; for(const L of state.letters){ ctx.fillRect(L.x, L.y, L.w, L.h); ctx.fillStyle='#b57900'; ctx.fillRect(L.x+4, L.y+6, 10,3); ctx.fillStyle='#facc15'; }
+
+  // player
+  ctx.fillStyle='#60a5fa'; const p=state.player; ctx.fillRect(p.x,p.y,p.w,p.h);
+
+  // ghost
+  const g = state.ghost; ctx.save(); ctx.globalAlpha = 0.9; const grad = ctx.createRadialGradient(g.x,g.y,6,g.x,g.y,g.r);
+  grad.addColorStop(0,'rgba(255,255,255,0.94)'); grad.addColorStop(0.6,'rgba(240,240,245,0.12)'); grad.addColorStop(1,'rgba(10,10,14,0)'); ctx.fillStyle=grad; ctx.beginPath(); ctx.arc(g.x,g.y,g.r,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  // darkness / torch hole
+  if(state.torchOn){ ctx.fillStyle='rgba(0,0,0,0.86)'; ctx.fillRect(0,0,W,H); const px = p.x + p.w/2, py = p.y + p.h/2; const radius = Math.max(40, 120 * state.torchFlicker);
+    ctx.save(); ctx.globalCompositeOperation='destination-out'; const grd = ctx.createRadialGradient(px,py,12,px,py,radius); grd.addColorStop(0,'rgba(0,0,0,1)'); grd.addColorStop(0.6,'rgba(0,0,0,0.6)'); grd.addColorStop(1,'rgba(0,0,0,0)'); ctx.fillStyle=grd; ctx.beginPath(); ctx.arc(px,py,radius,0,Math.PI*2); ctx.fill(); ctx.restore();
+  } else { ctx.fillStyle='rgba(0,0,0,0.96)'; ctx.fillRect(0,0,W,H); }
+
+  // HUD overlay
+  ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.font='12px Arial'; ctx.fillText('Letters: '+state.collectedLetters+'/'+LETTERS.length, 12, 18);
+}
+
+function loop(now){ const dt = now ? (now - (loop.last||now)) : 16; loop.last = now; update(dt); draw(); if(state.running) requestAnimationFrame(loop); }
+
+function victory(){ state.running=false; stopAllAudio(); alert('You escaped... but the whispers remain.'); }
+function gameOver(){ state.running=false; stopAllAudio(); playVoice('voice_hard_1'); setTimeout(()=> alert('GAME OVER — We told you not to come.'),400); }
+
+// start with placeholder state
+spawnLetters(); spawnGhost(); updateHUD(); draw();
+
+</script>
+</body>
+</html>
